@@ -1,4 +1,4 @@
-Provides guaranteed delivery for messaging in Ballerina
+Provides guaranteed message delivery in Ballerina
 
 # Compatibility
 
