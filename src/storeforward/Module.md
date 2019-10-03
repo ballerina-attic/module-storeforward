@@ -1,14 +1,11 @@
-Provides guaranteed message delivery in Ballerina
+Provides guaranteed message delivery in Ballerina.
 
-# Compatibility
+# Module Overview
 
-|                    |    Version     |  
-|:------------------:|:--------------:|
-| Ballerina Language |   1.0.0      |
+The `wso2/storeforward` module provides a Message Storing Client and a Message Forwarding Service to store and 
+forward messages, ensuring reliable delivery of messages.
 
-# Module overview
-
-`storeforward` connector allows you to perform
+It allows you to,
 
 1. Decouple message producer and subscriber
 2. Enable guaranteed message delivery to an HTTP endpoint
@@ -16,93 +13,196 @@ Provides guaranteed message delivery in Ballerina
 4. In order message delivery 
 5. Scheduled message delivery 
 
-# Design
+The Store Forward module utilizes the WSO2 JMS Module (`wso2/jms`) for underlying communication.
 
-`storeforward` connector uses `JMS connector` and `HTTP connector` underneath. It has two main components. 
+**Store Forward Client**
 
-* `storeforward:Client` is used to store messages. The messages are stored into a queue of a message broker. 
-* `storeforward:MessageForwardingProcessor` is used to poll messages from the store (i.e queue in message broker), and 
-forward them reliably to HTTP endpoint. 
+The `storeforward:Client` is used to store messages. The messages are stored in a queue of a message broker. 
 
-HTTP connector has resiliency configurations (max retry attempts, retry interval etc.). In order to obtain reliable message 
-forwarding, `storeforward` connector makes use of resiliency provided by HTTP Client of Ballerina. In case of a failure case,
-we need to keep the message in the queue. Hence, as the acknowledgement mode the `storeforward:MessageForwardingProcessor` component
-uses `CLIENT ACKNOWLEDGE` when polling message. Only if the message forwarding is successful, the JMS message is acknowledged. 
+**Message Forwarding Processor**
 
-Before storing the inbound HTTP message into the message broker queue, we need to convert the HTTP message into a JMS message. 
-At the same time, we need to ensure we capture all information in the HTTP message. (JMS Map message)[https://docs.oracle.com/javaee/6/api/javax/jms/MapMessage.html] is used as the JMS message type in the design. The header names and values are converted to map entries. 
-The payload is also stored as a field in the map message using `byte[]` as the value. The idea is that the connector does
-not try to interpret the message when storing it as a JMS message. This makes reconstruction of HTTP message at `MessageForwardingProcessor`
-straightforward. 
+The `storeforward:MessageForwardingProcessor` is used to poll messages from the store (i.e. queue in message broker), 
+and forward them reliably to the HTTP endpoint. 
 
-`MessageForwardingProcessor` uses `Task` in Ballerina to trigger message polling. This enables to poll messages by interval 
-or by cron expression. 
+## Compatibility
 
-To forward messages to HTTP endpoint configured, the connector uses Ballerina http client. The configuration of `MessageForwardingProcessor`
-is capable of absorbing any configuration for HTTP client of Ballerina. This enables to forward messages to secured HTTP service
-and many other features bundled into HTTP client. 
+|                             |           Version           |
+|:---------------------------:|:---------------------------:|
+| Ballerina Language          |            1.0.1            |
 
-Both `Client` and `MessageForwardingProcessor` components have resiliency for connecting to message broker. If it lost 
-connection to the broker, both can recover automatically. 
+## Sample
 
-# Features
+Requests received to integration service should be stored in the queue using the `storeforward:Client`. Then 
+`messageStore:MessageForwardingProcessor` is used to poll messages from the store and forward them reliably to HTTP endpoint.
+
+Before getting started with the samples below, make sure you have a message broker instance up and running.
+To enable connecting to ActiveMQ message broker, create `lib` directory in your Ballerina project and add the 
+following `.jar` files from `[ACTIVEMQ-HOME]/lib` directory. Then add the library references to the `Ballerina.toml` file as below:
+
+```ballerina
+[platform]
+target = "java8"
+
+  [[platform.libraries]]
+  module = "listener"
+  path = "./lib/activemq-client-5.15.5.jar"
+
+  [[platform.libraries]]
+  module = "listener"
+  path = "./lib/geronimo-j2ee-management_1.1_spec-1.0.1.jar"
+
+  [[platform.libraries]]
+  module = "listener"
+  path = "./lib/hawtbuf-1.11.jar"
+```
+
+Then add the `stockQuote` service which will store the messages received at the `/stock-management/quotes` 
+endpoint, in the message queue `stock_orders`. 
+
+**Message Store**
+
+```ballerina
+import ballerina/http;
+import wso2/storeforward;
+
+@http:ServiceConfig { basePath: "/stock-management" }
+service stockQuote on new http:Listener(8080) {
+
+    @http:ResourceConfig {
+        methods: ["POST"],
+        path: "/quotes"
+    }
+    resource function placeOrder(http:Caller caller, http:Request request) returns error? {
+        // Configure message store to publish stock orders
+        storeforward:MessageStoreConfiguration storeConfig = {
+            messageBroker: "ACTIVE_MQ",
+            providerUrl: "tcp://localhost:61616",
+            queueName: "stock_orders"
+        };
+
+        // Initialize client to store the message
+        storeforward:Client storeClient = check new storeforward:Client(storeConfig);
+        var result = storeClient->store(request);
+
+        // Respond back to the caller based on the result
+        if (result is error) {
+            check caller->respond("Stock order placement failed.");
+        } else {
+            check caller->respond("Stock order placed successfully.");
+        }
+    }
+}
+```
+
+Next add the `Message Processor` which will poll for messages in the message queue and forward any new messages to the 
+`/services/SimpleStockQuoteService` endpoint. 
+
+**Message Processor**
+
+```ballerina
+import ballerina/http;
+import ballerina/log;
+import wso2/storeforward;
+
+public function main(string... args) {
+    // Configure message store to consume stock orders
+    storeforward:MessageStoreConfiguration storeConfig = {
+            messageBroker: "ACTIVE_MQ",
+            providerUrl: "tcp://localhost:61616",
+            queueName: "stock_orders"
+        };
+
+    // Configure processor to send the message to the backend every second
+    storeforward:ForwardingProcessorConfiguration processorConfig = {
+        storeConfig: storeConfig,
+        HttpEndpointUrl: "http://localhost:9000/services/SimpleStockQuoteService",
+        pollTimeConfig: 1000,
+        retryInterval: 3000,
+        maxRedeliveryAttempts: 5
+    };
+
+    // Initialize and start processor to run periodically
+    var stockOrderProcessor = new storeforward:MessageForwardingProcessor(processorConfig, handleResponse);
+    if (stockOrderProcessor is error) {
+        log:printError("Error while initializing message processor.", err = stockOrderProcessor);
+        panic stockOrderProcessor;
+    } else {
+        var isStart = stockOrderProcessor. start();
+        if (isStart is error) {
+            panic isStart;
+        } else {
+            stockOrderProcessor.keepRunning();
+        }
+    }
+}
+
+// Process the response received by stock quote service 
+function handleResponse(http:Response response) {
+    int statusCode = response.statusCode;
+    if (statusCode == 200) {
+        log:printInfo("Stock order persisted sucessfully.");
+    } else {
+        log:printError("Error status code " + statusCode.toString() + " received from the stock quote service ");
+    }
+}
+``` 
+
+## Module Features
 
 ## Storing messages
 
-### 1. Configure any message broker
+### 1. Can configure any message broker
 
-This is possible as the connector uses `JMS` connector underneath. It supports any message broker with `JMS` support. 
-Users need to place third party .jar files into `<BALLERINA_HOME>/bre/lib` directory. Currently, it is tested with 
-Active MQ, IBM MQ and WSO2 MB. 
+This is possible as the Store forward connector uses the JMS connector for underlying communication. It supports any 
+message broker with `JMS` support. Currently, the connector is tested with Active MQ, IBM MQ and WSO2 MB message brokers. 
 
 ### 2. Store messages reliably
 
 If storing a message failed, the connector will try to store it to the same message store a few times before giving up. 
-The store connector will try to re-initialize the connection to the broker and retry to send the message over JMS. If this is a transient connection issue  while storing the message, this feature can recover from that situation. 
+The store connector will try to reinitialize the connection to the broker and try to send the message over JMS. If 
+this is a transient connection issue that occurred while storing the message, this feature can recover from that situation. 
 
 When retrying, users can configure
 
-* interval - (seconds) this is the interval retrying will start
-* backOffFactor - interval of retrying will increase per iteration by this factor
-* maxWaitInterval - (seconds) maximum wait interval retrying can increase to
-* count - Specify (-1) to retry infinitely. Otherwise, this will be the maximum number of retries
+* `interval` - Time interval to attempt connecting to broker (seconds). Each time this time gets multiplied by 
+`backOffFactor` until `maxWaitInterval` is reached
+* `backOffFactor` - Interval for retrying will increase per iteration by this factor
+* `maxWaitInterval` - Maximum value for '`interval` 
+* `count` - Specify (-1) to retry infinitely. Otherwise, this will be the maximum number of retry attempts before giving up.
 
-If failed to store the message after all retries `store` method will return an error.
+If failed to store the message after all retries, `store` method will return an error.
  
 ### 3. Configure a secondary message store
 
-If all retries to store the message to the primary store has failed and if a secondary store is configured store connector will try to store it in the secondary store. This can be a separate queue of the same broker. However, 
-configuring a queue of a different broker instance will give more reliability in case of primary broker is not responding.
+If all retry attempts to store the message in the primary store have failed, and if a secondary store is configured, store 
+connector will try to store the message in the secondary store. This can be a separate queue on the same broker. However, 
+configuring a queue on a different broker instance will give more reliability in case the primary broker is not responding.
 Secondary store can also have resiliency parameters. 
 
-If failed to store the message after all retries to primary store and secondary store, `store` method will return an error.
+If failed to store the message in both primary and secondary stores after all retry attempts, `store` method will return an error.
 
 >NOTE: you can have another `secondary` store for the configured secondary store as well. This will build a chain of stores
 to retry storing. 
 
-### 4. Store messages using a secured connection to the message broker 
+### 4. Failover of brokers
 
-Not available
-
-### 5. Fail-over of brokers
-
-JMS broker have fail-over feature. That is, if primary broker is not reachable, JMS implementation will try the next broker
+JMS broker has the failover feature, in which if the primary broker is not reachable, JMS implementation will try the next broker
 in the fail-over chain. As the connector uses JMS, this feature is inherited. 
 
-Example: https://activemq.apache.org/failover-transport-reference
-         https://docs.wso2.com/display/MB320/Handling+Failover 
+Example: [Failover feature when using ActiveMQ](https://activemq.apache.org/failover-transport-reference)
+         [Failover feature when using WSO2 MB](https://docs.wso2.com/display/MB320/Handling+Failover)
 
 ## Forwarding messages
 
 ### 1. Forwarding messages to HTTP services. Configure SSL, timeouts, keep-alive, chunking etc 
 
-The `MessageForwardingProcessor` can be configured to invoke secured services using SSL/TLS or Oauth tokens. In fact, 
-any configuration related to (HTTP Client of Ballerina)[https://ballerina.io/learn/api-docs/ballerina/http.html#ClientEndpointConfig] can be provided. 
+The `MessageForwardingProcessor` can be configured to invoke secured services using SSL/TLS or Oauth tokens. Any 
+configuration related to [HTTP Client of Ballerina](https://v1-0-0-alpha.ballerina.io/learn/api-docs/ballerina/http/records/ClientEndpointConfig.html) 
+can be provided. 
 
 Example config: 
 
 ```ballerina
-
     http:ServiceEndpointConfiguration endpointConfig = {
         secureSocket: {
             trustStore: {
@@ -120,18 +220,18 @@ Example config:
     };
 ```
 
-### 2. Resiliency in forwarding messages to HTTP service
+### 2. Resiliency in forwarding messages to an HTTP service
 
-When forwarding messages, user can configure
+When forwarding messages user can configure,
 
-* retryInterval - (milliseconds) interval between two retries
-* maxRedeliveryAttempts - maximum number of times to retry
+* `retryInterval` - Interval between two retries in milliseconds
+* `maxRedeliveryAttempts` - Maximum number of times to retry
 
-Note that if `maxRedeliveryAttempts` breached when trying to forward a message, that message is considered as a forwarding fail message.
-According to `forwardingFailAction` this message will be either dropped or routed to another store. Also if you configured `retryConfig`
+Note that if `maxRedeliveryAttempts` exceeded when trying to forward a message, that message is considered as a forwarding fail message.
+According to `forwardingFailAction` this message will either be dropped or routed to another store. Also if you configured `retryConfig`
 under httpClient config set at `HttpEndpointConfig`, it will be overridden by these values. 
 
-Sample config : retry 5 times with 3 second interval 
+Sample config : Retry 5 times with 3 second interval 
 
 ```ballerina
     storeforward:ForwardingProcessorConfiguration myProcessorConfig = {
@@ -145,14 +245,15 @@ Sample config : retry 5 times with 3 second interval
 
 ### 3. Control message forwarding rate
 
-Message forwarding rate is controlled by following parameters
+Message forwarding rate is controlled by following parameters.
 
-* pollTimeConfig - users can configure an interval where forwarding task triggers. Even a cron expression is possible. (i.e `0/2 * * * * ?`)
-* forwardingInterval - By default this is configured to`0`. It is effective only when `batchSize > 1`. The messages in a 
-                       batch will be forwarded to the HTTP service with a delay of `forwardingInterval` between the messages configured in milliseconds. By default `batchSize = 1`. 
+* `pollTimeConfig` - Interval messages should be polled from the broker (milliseconds) or cron expression for polling task (i.e. `0/2 * * * * ?`)
+* `forwardingInterval` - By default this is configured to `0`. It is effective only when `batchSize > 1`. The messages 
+in a batch will be forwarded to the HTTP service with a delay of `forwardingInterval` between the messages configured 
+in milliseconds. By default `batchSize = 1`. 
 
->Note : message preprocess delay and response handling delay will also get added and affect to the overall forwarding rate. This is because 
-        messages are processed one after the other. 
+>Note : message preprocess delay and response handling delay will also get added and effect the overall forwarding rate. 
+>This is because messages are processed one after the other. 
 
 Sample config: Forward a message once two seconds
 
@@ -166,7 +267,7 @@ Sample config: Forward a message once two seconds
     };
 ```
 
-Sample config: Forward a message once 100ms
+Sample config: Forward a message once every 100ms
 
 ```ballerina
     storeforward:ForwardingProcessorConfiguration myProcessorConfig = {
@@ -181,16 +282,16 @@ Sample config: Forward a message once 100ms
 ### 4. Scheduled message forwarding
 
 When you need to trigger message forwarding at a specific time of the day, or at a specific
-time every day, every week, you can specify a cron. 
+time every day or every week, you can specify a cron. 
 
-There is a question how many messages to process once forwarding triggered because there can be 
+There is a question how many messages to process once forwarding is triggered because there can be 
 millions of messages on the store. You can specify that by `batchSize` (default = 1). The interval between 
 two message forwards is configured by `forwardingInterval` (default = 0). 
 
 >Note: When `batchSize` is configured to -1 the processor will poll messages until the store becomes empty. When there is
        no messages in store, processing will get stopped until next time it is triggered as per the cron specified.
 
-On how to construct cron expressions, refer (here)[http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html]. 
+On how to construct cron expressions, refer [here](http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html). 
 
 Sample config: Trigger at 3.45 P.M everyday and forward all messages on store, one message per 3 seconds. 
 
@@ -204,10 +305,9 @@ Sample config: Trigger at 3.45 P.M everyday and forward all messages on store, o
         batchSize: -1,
         forwardingInterval: 3000
     };
-
 ```
 
-Sample config: Fire every minute starting at 2pm and ending at 2:59pm, every day. Every minute forward 30 messages max with an interval
+Sample config: Fire every minute starting at 2pm and ending at 2:59pm, every day. At every minute, forward 30 messages max with an interval
                of one second between each message forward. 
 
 ```ballerina
@@ -226,9 +326,9 @@ Sample config: Fire every minute starting at 2pm and ending at 2:59pm, every day
 
 Sometimes, even if the backend HTTP service sent a response, we need to consider it as a failure. For an example, if
 HTTP status code is 500 or 404, it is in fact not processed by the service. To cater the cases, you can specify a set of
-status codes which message processor should consider as a forwarding failure, and hence retry to forward again. 
+status codes which message processor should consider as a forwarding failure, and hence retry forwarding again. 
 
-Sample config; 
+Sample config: 
 
 ```ballerina
     storeforward:ForwardingProcessorConfiguration myProcessorConfig = {
@@ -243,16 +343,16 @@ Sample config;
 
 ### 6. Different actions upon a message forwarding failure
 
-Depending on the use-case, uses will need to do either of following when message processor failed to forward it to the
+Depending on the use-case, users will need to do either of the following when message processor failed to forward it to the
 HTTP service. 
 
-* DROP - drop the message and continue with the next message on the store
-* DEACTIVATE - stop message processing further. User will need to manually remove 
-               the message or fix the issue and restart message polling service. 
-* DLC_STORE - move the failing message to a configured message store and continue with the next message. Later user can 
-             deal with the messages in the DLC store manually. 
+* `DROP` - Drop the message and continue with the next message on the store
+* `DEACTIVATE` - Stop message processing further. User will need to manually remove the message or fix the issue and 
+restart message polling service. 
+* `DLC_STORE` - Move the failing message to a configured message store and continue with the next message. Later user 
+can deal with the messages in the DLC store manually. 
 
-By default, the behavior is to DROP. 
+By default, the behavior is to `DROP`. 
 
 Sample config: Try to forward each message 5 times. If there is a failure, deactivate the processor. 
 
@@ -296,9 +396,9 @@ Sample config: Try to forward each message 5 times. If there is a failure, move 
 
 ### 8. Pre-process message before forwarding to the backend service
 
-By design message processor will reconstruct the HTTP request that is stored in the message store and forward to the service.
-However, sometimes there is a requirement to modify the HTTP request before sending it out to a HTTP service (i.e a heavy transformation).
-A workaround will be to do the transformation prior to storing the message and store it, but if it is heavy, user might 
+By design, message processor will reconstruct the HTTP request that is stored in the message store and forward to the service.
+However, sometimes there is a requirement to modify the HTTP request before sending it out to an HTTP service (i.e a heavy transformation).
+A workaround for this will be to do the transformation prior to storing the message and store it, but if it is heavy, user might 
 want to store what is inbound and do the transformation at message processing with a controlled forwarding rate. 
 
 In such cases, user can define a function with the logic to do the pre-processing and configure it as follows.
@@ -318,11 +418,11 @@ var myMessageProcessor = new storeforward:MessageForwardingProcessor(myProcessor
 
 User need to do some operation on the response received by the backend service. This may be calling
 another service with the response, or store details of the response in a database.  User can define a function with the 
-logic to handle the response and configure it to the processor.
+logic to handle the response and configure it in the processor.
 
 ```ballerina
 function handleResponseFromBE(http:Response resp) {
-    var payload =  resp.getJsonPayload();
+    var payload = resp.getJsonPayload();
     if(payload is json) {
         log:printInfo("Response received " + "Response status code= "+ resp.statusCode + ": "+ payload.toString());
     } else {
@@ -334,42 +434,3 @@ var myMessageProcessor = new storeforward:MessageForwardingProcessor(myProcessor
 ```
 
 >Note The time taken to process the response message will get added to the message forwarding interval. 
-
-## Integration patterns 
-
-### 1. Reliable delivery
-
-The connector can be used to forward an HTTP message reliable to a HTTP service. If you need to expose an unreliable HTTP service
-in an reliable manner, this connector can be used. Message will not get discarded until it is successfully delivered to the service. 
-The poison messages which cannot be processed by the service, can be routed to DLC store and users can manually deal with them. 
-
-### 2. In order message delivery 
-
-This connector stores messages in a queue of a message broker, which keeps FIFO behavior. Hence, the inbound messages are stored
-in the order they reached the service. When polling, messages are picked and processed once after the other, where the order
-of messages in the queue is kept when delivering to the backend. If a message is failed to process, the processor can be configured
-to stop until issue is fixed, so that the order is ensured.
-
-### 3. Message throttling 
-
-Sometimes, there are legacy backend services in the systems, which cannot service inbound requests in a high throughput. they may crash
-or go out of resources. If there are spikes in the inbound request rate, which backend service cannot withhold, there is a need to regulate
-the message rate. 
-
-Messages can be stored in the incoming rate. Message forwarding rate is governed by following parameters. 
-
-* pollTimeConfig - users can configure an interval where forwarding task triggers. Even a cron expression is possible. (i.e `0/2 * * * * ?`)
-* forwardingInterval - By default this is configured to`0`. It is effective only when `batchSize > 1`. The messages in a 
-                       batch will be forwarded to the HTTP service with a delay of `forwardingInterval` between the messages configured in milliseconds. By default `batchSize = 1`. 
-
-### 4. Asynchronous messaging 
-
-By design, messages are not processed in a synchronous manner. Inbound messages are stored and then they are processed. Processing can be scheduled 
-so that messages came in are processed later in off-peak hours. Storing service and processing service can be two separate containers. 
-These are the semantics of asynchronous message processing. Reliable delivery is added on top of it. Thus, in places where asynchronous messaging
-is required, this connector can be used. 
-
-## Extensibility
-
-As the connector is using `JMS` connector, any message broker with the support for `JMS` can be configured
-   for reliable messaging. Users need to place third party .jar files into `<BALLERINA_HOME>/bre/lib` directory. 

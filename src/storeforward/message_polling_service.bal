@@ -15,19 +15,20 @@
 // under the License.
 
 import ballerina/http;
-import wso2/jms;
 import ballerina/log;
 import ballerina/runtime;
+import wso2/jms;
 
-//service with steps done upon message processor task trigger
+
+// Service executed when message processor is triggered
 service messageForwardingService = service {
 
     resource function onTrigger(PollingServiceConfig config) {
         int messageCount = 0;
         while (config.batchSize == -1 || messageCount < config.batchSize) {
             ForwardStatus forwardStatus = pollAndForward(config);
-            //if there is no message on message store or if processor should get deactivated on forwarding fail
-            //need to immediately return from the loop
+            // Immediately return from the loop if there is no message on message store or if processor should get
+            // deactivated on forwarding fail
             if(!forwardStatus.success && (config.forwardingFailAction == DEACTIVATE) || forwardStatus.storeEmpty) {
                 if(forwardStatus.storeEmpty) {
                     log:printDebug("Message store is empty. Queue = " + config.queueName 
@@ -43,7 +44,7 @@ service messageForwardingService = service {
     }
 };
 
-# Poll a message from message store and forward it to defined endpoint.
+# Poll a message from message store and forward it to a defined endpoint.
 #
 # + config - Configuration for message processing service
 # + return - `true` if message forwarding is successful
@@ -55,14 +56,15 @@ function pollAndForward(PollingServiceConfig config) returns ForwardStatus {
     //wait for 1 second until you receive a message. If no message is received nil is returned
     jms:Message|error? queueMessage = consumer->receive(1000);
     if (queueMessage is jms:BytesMessage) {
-        var httpRequest = constructHTTPRequest(queueMessage);
+        http:Request|error httpRequest = constructHTTPRequest(queueMessage);
         if (httpRequest is http:Request) {
-            //invoke pre-process logic
+            // Invoke pre-process logic
             (function (http:Request) returns ())? preProcessRequest = config.preProcessRequest;
             if (preProcessRequest is function(http:Request request)) {
                 preProcessRequest(httpRequest);
             }
-            //invoke the backend using HTTP Client, it will use receliecy parameters
+
+            // Invoke the backend using HTTP Client, it will use resiliency parameters
             http:Client clientEP = config.httpClient;
             string httpVerb = config.HttpOperation;
             var response = clientEP->execute(<@untainted> httpVerb, "", httpRequest);
@@ -77,7 +79,7 @@ function pollAndForward(PollingServiceConfig config) returns ForwardStatus {
         forwardSuccess = false;
         messageStoreEmpty = true;
     } else {
-        // Error when message receival. Need to reset the connection. session and consumer
+        // Error on receiving message. Need to reset the connection, session and consumer
         log:printError("Error occurred while receiving message from queue " + config.queueName);
         forwardSuccess = false;
         onMessagePollingFailFunction();
@@ -99,10 +101,10 @@ function pollAndForward(PollingServiceConfig config) returns ForwardStatus {
 # + request - HTTP request forwarded `http:Request`
 # + return - `true` if message forwarding is a success
 function evaluateForwardSuccess(PollingServiceConfig config, http:Request request,
-http:Response | error response, jms:Message queueMessage) returns boolean {
-    //in case of retry status codes specified, HTTP client will retry but a response
-    //will be received. Still in case of forwarding we need to consider it as a failure
-    boolean fowardSucess = true;
+                http:Response|error response, jms:Message queueMessage) returns boolean {
+    // If retry status codes are specified, HTTP client will retry but a response
+    // will be received. Still, in case of forwarding we need to consider it as a failure.
+    boolean forwardSucess = true;
     if (response is http:Response) {
         boolean isFailingResponse = false;
         int[] retryHTTPCodes = config.retryHttpCodes;
@@ -115,12 +117,12 @@ http:Response | error response, jms:Message queueMessage) returns boolean {
             }
         }
         if (isFailingResponse) {
-            //Failure. Response has failure HTTP status code
-            fowardSucess = false;
+            // Failure. Response has failure HTTP status code
+            forwardSucess = false;
             onMessageForwardingFail(config, request, queueMessage);
         } else {
-            //success. Ack the message
-            fowardSucess = true;
+            // Success. Ack the message
+            forwardSucess = true;
             jms:MessageConsumer consumer = config.messageConsumer;
             var ack = queueMessage->acknowledge();
             if (ack is error) {
@@ -130,41 +132,41 @@ http:Response | error response, jms:Message queueMessage) returns boolean {
         }
     } else {
         //Failure. Connection level issue
-        fowardSucess = false;
+        forwardSucess = false;
         log:printError("Error when invoking the backend" + config.httpEP, err = response);
         onMessageForwardingFail(config, request, queueMessage);
     }
-    return fowardSucess;
+    return forwardSucess;
 }
 
 # Take actions when message forwarding fails. 
 #
-# + config - cconfiguration for message processor `PollingServiceConfig` 
+# + config - Configuration for message processor `PollingServiceConfig`
 # + request - HTTP request `http:Request` failed to forward 
-# + queueMessage - message received from the queue `jms:Message` that failed to process
+# + queueMessage - Message received from the queue `jms:Message` that failed to process
 function onMessageForwardingFail(PollingServiceConfig config, http:Request request, jms:Message queueMessage) {
-    if (config.forwardingFailAction == DEACTIVATE) {        //just deactivate the processor
-        log:printWarn("Maximum retires breached when forwarding message to HTTP endpoint " + config.httpEP
+    if (config.forwardingFailAction == DEACTIVATE) {        // Just deactivate the processor
+        log:printWarn("Maximum retry count exceeded when forwarding message to the HTTP endpoint " + config.httpEP
         + ". Message forwading is stopped for " + config.httpEP);
         config.onDeactivate();
-    } else if (config.forwardingFailAction == DLC_STORE) {        //if there is a DLC store defined, store the message into that
-        log:printWarn("Maximum retires breached when forwarding message to HTTP endpoint " + config.httpEP
-        + ". Forwarding message to DLC Store");
+    } else if (config.forwardingFailAction == DLC_STORE) {        // If there is a DLC store defined, store the message in it
+        log:printWarn("Maximum retry count exceeded when forwarding message to the HTTP endpoint " + config.httpEP
+        + ". Forwarding message to the DLC Store");
         Client? DLCStore = config["DLCStore"];
         if (DLCStore is Client) {
-            var storeResult = DLCStore->store(request);
+            error? storeResult = DLCStore->store(request);
             if (storeResult is error) {
-                log:printError("Error while forwarding message to DLC store. Message will be lost", err = storeResult);
+                log:printError("Error while forwarding message to the DLC store. Message will be lost.", err = storeResult);
             } else {
                 ackMessage(config, queueMessage);
             }
         } else {
-            log:printError("Error while forwarding message to DLC store. DLC store is not specified. Message will be lost");
+            log:printError("Error while forwarding message to the DLC store. DLC store is not specified. Message will be lost");
             ackMessage(config, queueMessage);
         }
-    } else {        //drop the message and continue
-        log:printWarn("Maximum retires breached when forwarding message to HTTP endpoint " + config.httpEP
-        + ". Dropping message and continue");
+    } else {        // Drop the message and continue
+        log:printWarn("Maximum retry count exceeded when forwarding message to the HTTP endpoint " + config.httpEP
+        + ". Dropping message.");
         ackMessage(config, queueMessage);
     }
 }

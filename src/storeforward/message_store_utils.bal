@@ -20,17 +20,17 @@ public type MessageForwardFailAction DROP|DLC_STORE|DEACTIVATE;
 
 public const DELETE = "DELETE";
 
-//constants for message forwarding failure actions
+// Constants for message forwarding failure actions
 public const DROP = "DROP";
 public const DLC_STORE = "DLC_STORE";
 public const DEACTIVATE = "DEACTIVATE";
 
-//constants for broker types
+// Constants for broker types
 public const ACTIVE_MQ = "ACTIVE_MQ";
 public const IBM_MQ = "IBM_MQ";
 public const WSO2MB = "WSO2MB";
 
-//constant used as key for paload in JMS map message
+// Constant used as key for payload in JMS map message
 const PAYLOAD = "PAYLOAD";
 
 const string CLIENT_ACKNOWLEDGE = "CLIENT_ACKNOWLEDGE";
