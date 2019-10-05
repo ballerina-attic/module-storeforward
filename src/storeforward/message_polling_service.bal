@@ -53,7 +53,7 @@ function pollAndForward(PollingServiceConfig config) returns ForwardStatus {
     function() onMessagePollingFailFunction = config.onMessagePollingFail;
     jms:MessageConsumer consumer = config.messageConsumer;
     //wait for 1 second until you receive a message. If no message is received nil is returned
-    var queueMessage = consumer->receive(1000);
+    jms:Message|error? queueMessage = consumer->receive(1000);
     if (queueMessage is jms:BytesMessage) {
         var httpRequest = constructHTTPRequest(queueMessage);
         if (httpRequest is http:Request) {
