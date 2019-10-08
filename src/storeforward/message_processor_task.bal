@@ -14,16 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import wso2/jms;
-import ballerina/task;
-import ballerina/log;
-import ballerina/runtime;
-import ballerina/math;
 import ballerina/http;
+import ballerina/log;
+import ballerina/math;
+import ballerina/runtime;
+import ballerina/task;
+import wso2/jms;
 
 
-# Definition of forwarding Processor object. It polls messages from Message Broker
-# pointed and forwards messages to the configred HTTP endpoint with reliability. 
+# Definition of forwarding Processor object. It polls messages from the configured Message Broker queue
+# and forwards messages to the configred HTTP endpoint with reliability.
 public type MessageForwardingProcessor object {
 
     //TODO: remove after (ballerina-lang/issues/16201)
@@ -31,15 +31,15 @@ public type MessageForwardingProcessor object {
 
     ForwardingProcessorConfiguration processorConfig;
 
-    //objects related to JMS connection
+    // Objects related to JMS connection
     jms:Connection jmsConnection;
     jms:Session jmsSession;
     jms:MessageConsumer messageConsumer;
 
-    //HTTP client used to forward messages to HTTP endpoint
+    // HTTP client used to forward messages to HTTP endpoint
     http:Client httpClient;
 
-    //task driving the message polling from the broker and forward
+    // Task driving the message polling from the broker and forward
     task:Scheduler messageForwardingTask;
 
     # Initialize `MessageForwardingProcessor` object. This will create necessary
@@ -47,10 +47,10 @@ public type MessageForwardingProcessor object {
     # of messages is not started until `start` is called. 
     # 
     # + processorConfig - `ForwardingProcessorConfiguration` processor configuration 
-    # + handleResponse  - `function (http:Response resp)` lamda to process the response from HTTP BE 
+    # + handleResponse  - `function (http:Response resp)` lambda to process the response from HTTP BE
     #                      after forwarding the request by processor
-    # + preProcessRequest - `function(http:Request requst)` lamda to process the request before forwarding to the backend
-    # + return          - `error` if there is an issue initializing processor (i.e connection issue with broker)
+    # + preProcessRequest - `function(http:Request requst)` lambda to process the request before forwarding to the backend
+    # + return - `error` if there is an issue initializing processor (i.e. connection issue with broker)
     public function __init(ForwardingProcessorConfiguration processorConfig,
     function(http:Response resp) handleResponse, function(http:Request request)? preProcessRequest = ()) returns error? {
         self.active = true;
@@ -61,24 +61,24 @@ public type MessageForwardingProcessor object {
         string acknowledgementMode = CLIENT_ACKNOWLEDGE;
         string queueName = storeConfig.queueName;
 
-        //if retry config is not set, set one with defaults
+        // If retry config is not set, set one with defaults
         if(storeConfig?.retryConfig == ()) {
             storeConfig.retryConfig = {
-                count: -1,  //infinite retry until success
+                count: -1,  // Infinite retry until success
                 interval: 5,
                 backOffFactor: 1.5,
                 maxWaitInterval: 60
             };
         }
 
-        //init connection to the broker
+        // Init connection to the broker
         var consumerInitResult = check trap initializeConsumer(storeConfig);
         var [connection, session, consumer] = consumerInitResult;
         self.jmsConnection = connection;
         self.jmsSession = session;
         self.messageConsumer = consumer;
 
-        //init HTTP endpoint
+        // Init HTTP endpoint
         self.httpClient = check self.initializeHTTPClient(processorConfig);
 
         // Check if a cron is mentioned in config. If so, it gets priority
@@ -95,7 +95,7 @@ public type MessageForwardingProcessor object {
             retryHttpCodes = retryHttpCodesFromConfig;
         }
 
-        //create a record with objects needed by the polling service
+        // Create a record with objects required for the polling service
         PollingServiceConfig pollingServiceConfig = {
             messageConsumer: self.messageConsumer,
             queueName: queueName,
@@ -113,7 +113,7 @@ public type MessageForwardingProcessor object {
             DLCStore: processorConfig["DLCStore"]
         };
 
-        //attach the task work
+        // Attach the task work
         var assignmentResult = self.messageForwardingTask.attach(messageForwardingService,  attachment = pollingServiceConfig);
         if (assignmentResult is error) {
             log:printError("Error when attaching service to the message processor task ", err = assignmentResult);
@@ -136,7 +136,7 @@ public type MessageForwardingProcessor object {
         check self.messageForwardingTask. start();
     }
 
-    # Stop Messsage Processor. This will stop polling messages and forwarding.
+    # Stop Messsage Processor. This will stop polling and forwarding messages.
     #
     # + return - `error` in case of stopping Message Processor
     public function stop() returns error? {
@@ -156,7 +156,7 @@ public type MessageForwardingProcessor object {
     #
     # + processorConfig - `ForwardingProcessorConfiguration` config 
     # + return - `http:Client` in case of successful initialization or `error` in case of issue
-    function initializeHTTPClient(ForwardingProcessorConfiguration processorConfig) returns http:Client | error {
+    function initializeHTTPClient(ForwardingProcessorConfiguration processorConfig) returns http:Client|error {
         http:ClientConfiguration config;
         int[] retryStatusCode = [];
         int[]? processConfigRetryStatusCode = processorConfig?.retryHttpStatusCodes;
@@ -164,11 +164,11 @@ public type MessageForwardingProcessor object {
             retryStatusCode = processConfigRetryStatusCode;
         }
         http:RetryConfig retryConfig = {
-            intervalInMillis: processorConfig.retryInterval, //Retry interval in milliseconds
-            count: processorConfig.maxRedeliveryAttempts,   //Number of retry attempts before giving up
-            backOffFactor: 1.0, //Multiplier of the retry interval
-            maxWaitIntervalInMillis: 20000,  //Maximum time of the retry interval in milliseconds
-            statusCodes: retryStatusCode //HTTP response status codes which are considered as failures
+            intervalInMillis: processorConfig.retryInterval, // Retry interval in milliseconds
+            count: processorConfig.maxRedeliveryAttempts,    // Number of retry attempts before giving up
+            backOffFactor: 1.0,              // Multiplier of the retry interval
+            maxWaitIntervalInMillis: 20000,  // Maximum time of the retry interval in milliseconds
+            statusCodes: retryStatusCode     // HTTP response status codes which are considered as failures
         };
         var clientConfig = processorConfig.httpClientConfig;
         if(clientConfig is http:ClientConfiguration) {
@@ -188,13 +188,10 @@ public type MessageForwardingProcessor object {
     # + return - `error` in case of stopping and closing JMS objects
     function cleanUpJMSObjects() returns error? {
         check self.messageConsumer.__stop();
-        //TODO: Ballerina has no method to close session
-        //TODO: Ballerina has no method to close connection
         check trap self.jmsConnection->stop();
     }
 
-    # Retry connecting to broker according to given config. This will try forever
-    # until connection get successful.  
+    # Retry connecting to broker according to given config. This will try forever until connection is successful.
     function retryToConnectBroker(ForwardingProcessorConfiguration processorConfig) {
         MessageStoreConfiguration storeConfig = processorConfig.storeConfig;
         MessageStoreRetryConfig? messageStoreRetryConfig = storeConfig?.retryConfig;
@@ -213,7 +210,7 @@ public type MessageForwardingProcessor object {
         while (maxRetryCount == -1 || retryCount < maxRetryCount) {
             var consumerInitResult = trap initializeConsumer(storeConfig);
             if (consumerInitResult is error) {
-                log:printError("Error while re-connecting to queue "
+                log:printError("Error while reconnecting to queue = "
                 + storeConfig.queueName + " retry count = " + retryCount.toString(), err = consumerInitResult);
                 retryCount = retryCount + 1;
                 int retryDelay = retryInterval + math:round(retryCount * retryInterval * backOffFactor);
@@ -222,7 +219,7 @@ public type MessageForwardingProcessor object {
                 }
                 runtime:sleep(retryDelay * 1000);
             } else {
-                log:printInfo("Successfuly re-connected to message broker queue = " + processorConfig.storeConfig.queueName);
+                log:printInfo("Successfuly reconnected to message broker queue = " + processorConfig.storeConfig.queueName);
                 var [connection, session, consumer] = consumerInitResult;
                 self.jmsConnection = connection;
                 self.jmsSession = session;
@@ -232,7 +229,7 @@ public type MessageForwardingProcessor object {
         }
         if(retryCount >= maxRetryCount && maxRetryCount != -1) {
             log:printError("Could not connect to message broker. Maximum retry count exceeded. Count = "
-                       + maxRetryCount.toString() + ". Giving up retrying.");
+                       + maxRetryCount.toString() + ". Retrying stopped.");
         }
     }
 };
@@ -243,39 +240,38 @@ public type MessageForwardingProcessor object {
 # + return      - `jms:Connection, jms:Session, jms:MessageConsumer` created JMS connection, session and queue receiver if
 #                  created successfully or error in case of an issue when initializing. 
 function initializeConsumer(MessageStoreConfiguration storeConfig) returns
- [jms:Connection, jms:Session, jms:MessageConsumer] | error {
+                        [jms:Connection, jms:Session, jms:MessageConsumer] | error {
 
     string initialContextFactory = getInitialContextFactory(storeConfig.messageBroker);
     string acknowledgementMode = "CLIENT_ACKNOWLEDGE";
     string queueName = storeConfig.queueName;
 
-    // This initializes a JMS connection with the provider.
+    // Initialize JMS connection with the provider.
     jms:Connection jmsConnection = check jms:createConnection({
         initialContextFactory: initialContextFactory,
         providerUrl: storeConfig.providerUrl});
 
-    // This initializes a JMS session on top of the created connection.
+    // Initialize JMS session on top of the created connection.
     jms:Session jmsSession = check jmsConnection->createSession({
-            acknowledgementMode: acknowledgementMode
-        });
+        acknowledgementMode: acknowledgementMode
+    });
 
-    // This initializes a queue receiver.
+    // Initialize queue receiver.
     jms:Destination queue = check jmsSession->createQueue(queueName);
     jms:MessageConsumer messageConsumer = check jmsSession->createConsumer(queue);
-
     [jms:Connection, jms:Session, jms:MessageConsumer] brokerConnection = [jmsConnection, jmsSession, messageConsumer];
 
     return brokerConnection;
 }
 
-# Get a function pointer with logic of when polling of messages met with an error. 
+# Function pointer to be executed when polling fails.
 #
 # + processor -  `MessageForwardingProcessor` in which queue consumer should be reset 
-# + return    -  A function pointer with logic that close existing queue consumer of 
+# + return    -  A function pointer with logic that closes existing queue consumer of
 #                the given processor and re-init another consumer.         
 function onMessagePollingFail(MessageForwardingProcessor processor) returns function() {
     return function () {
-        log:printInfo("onMessagePollingFail is CALLED!!");
+        log:printInfo("Message polling failed on queue = " + processor.getQueueName());
         var cleanupResult = processor.cleanUpJMSObjects();
         if (cleanupResult is error) {
             log:printError("Error while cleaning up jms connection", err = cleanupResult);
@@ -284,9 +280,9 @@ function onMessagePollingFail(MessageForwardingProcessor processor) returns func
     };
 }
 
-# Get a function pointer with logic of deactivating message processor.
+# Function pointer to be executed when deactivating message processor.
 #
-# + processor - message processor to deactivate
+# + processor - Message processor to deactivate
 # + return - A function pointer with logic that deactivates message processor
 function onDeactivate(MessageForwardingProcessor processor) returns function() {
     return function () {
@@ -296,7 +292,6 @@ function onDeactivate(MessageForwardingProcessor processor) returns function() {
             log:printError("Error when stopping message polling task", err = processorStopResult);
         }
     };
-
 }
 
 
@@ -307,63 +302,61 @@ function onDeactivate(MessageForwardingProcessor processor) returns function() {
 # + HttpOperation - HTTP Verb to use when forwarding the message
 # + httpClientConfig - `ClientConfiguration` HTTP client config to use when forwarding messages to HTTP endpoint
 # + pollTimeConfig - Interval messages should be polled from the 
-#                    broker (Milliseconds) or cron expression for polling task  
-# + retryInterval - Interval messages should be re-tried in case of forwading failure (Milliseconds) 
+#                    broker (milliseconds) or cron expression for polling task
+# + retryInterval - Interval messages should be retried in case of forwading failure (milliseconds)
 # + retryHttpStatusCodes - If processor received any response after forwading the message with any of 
 #                          these status codes, it will be considered as a failed invocation `int[]` 
-# + maxRedeliveryAttempts - Max number of times a message should be re-tried in case of forwading failure 
+# + maxRedeliveryAttempts - Max number of times a message should be retried in case of forwading failure
 # + forwardingFailAction - Action to take when a message is failed to forward. `MessageForwardFailAction`
 #                          `DROP` - drop message and continue (default)
 #                          `DLC_STORE`- store message in configured  `DLCStore`
 #                          `DEACTIVATE` - stop message processor                           
-# + batchSize - Maximum number of messages to forward upon message process task is executed 
+# + batchSize - Maximum number of messages to forward when message process task is executed
 # + forwardingInterval - Time in milliseconds between two message forwards in a batch
-# + DLCStore - In case of forwarding failure, messages will be stored using this backup `Client`. Make sure `forwardingFailAction` is
-#              `DLC_STORE`
+# + DLCStore - In case of forwarding failure, messages will be stored using this backup `Client`. Make sure
+# `forwardingFailAction` is `DLC_STORE`
 public type ForwardingProcessorConfiguration record {|
     MessageStoreConfiguration storeConfig;
     string HttpEndpointUrl;
     http:HttpOperation HttpOperation = http:HTTP_POST;
     http:ClientConfiguration? httpClientConfig = ();
 
-    //configured in milliseconds for polling interval
-    //can specify a cron instead
+    // Configured in milliseconds for polling interval; can specify a cron instead
     int|string pollTimeConfig;
 
-    //forwarding retry
-    int retryInterval;    //configured in milliseconds
+    // Forwarding retry configured in milliseconds
+    int retryInterval;
     int[] retryHttpStatusCodes?;
     int maxRedeliveryAttempts;  
 
-    //action on forwarding fail of a message
+    // Action on forwarding fail of a message
     MessageForwardFailAction forwardingFailAction = DROP;
 
-    //batching messages for forwarding
+    // Batching messages for forwarding
     int batchSize = 1;
     int forwardingInterval = 0;
 
-    //specify message store client to forward failing messages
+    // Specify message store client to forward failing messages
     Client DLCStore?;
 |};
 
-# Record passing required information to service attached to message processor task.
+# Record to be passed to the service attached to message processor task.
 #
 # + messageConsumer - `jms:MessageConsumer` receiver to use when polling messages
 # + queueName - Name of the queue to receive messages from  
-# + httpClient - `http:Client` http client used to forward messages 
+# + httpClient - `http:Client` used to forward messages
 # + httpEP - Messages will be forwarded to this HTTP url 
 # + HttpOperation - HTTP Verb to use when forwarding the message
 # + DLCStore - In case of forwarding failure, messages will be stored using this backup `Client`
-# + forwardingFailAction - `MessageForwardFailAction` specifing processor behaviour on fowarding failure 
+# + forwardingFailAction - `MessageForwardFailAction` specifying processor behaviour on forwarding failure
 # + retryHttpCodes - If processor received any response after forwading the message with any of
 #                    these status codes, it will be considered as a failed invocation `int[]` 
 # + batchSize - Maximum number of messages to forward upon message process task is executed 
 # + forwardingInterval - Time in milliseconds between two message forwards in a batch
-# + onMessagePollingFail - Lamda with logic what to execute on a failure polling messages from broker `function()`
-# + onDeactivate - Lamda with logic what to execute to deactivate message processor  
-# + preProcessRequest - Lamda to execute upon request which is stored, before forwarding to the configured endpoint
-# + handleResponse - Lamda to execute upon response received by forwarding messages to the configured endpoint 
-#                    `function(http:Response resp)`
+# + onMessagePollingFail - Lambda with logic to execute on failing to poll messages from broker `function()`
+# + onDeactivate - Lambda with logic to execute when deactivating message processor
+# + preProcessRequest - Lambda to be executed upon storing request, before forwarding to the configured endpoint
+# + handleResponse - Lambda to be executed when forwarding messages to the configured endpoint upon receiving response
 type PollingServiceConfig record {
     jms:MessageConsumer messageConsumer;
     string queueName;
