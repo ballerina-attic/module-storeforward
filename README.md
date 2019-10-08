@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/wso2-ballerina/module-storeforward.svg?branch=master)](https://travis-ci.org/wso2-ballerina/module-storeforward) 
+
 ## Module Overview
 
 The `wso2/storeforward` module provides a Message Storing Client and a Message Forwarding Service to store and 
