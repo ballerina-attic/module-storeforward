@@ -26,7 +26,7 @@ service messageForwardingService = service {
     resource function onTrigger(PollingServiceConfig config) {
         int messageCount = 0;
         while (config.batchSize == -1 || messageCount < config.batchSize) {
-            ForwardStatus forwardStatus = pollAndForward(config);
+            ForwardStatus forwardStatus = pollAndForward(<@untainted>config);
             // Immediately return from the loop if there is no message on message store or if processor should get
             // deactivated on forwarding fail
             if(!forwardStatus.success && (config.forwardingFailAction == DEACTIVATE) || forwardStatus.storeEmpty) {

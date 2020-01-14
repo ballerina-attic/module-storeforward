@@ -36,11 +36,8 @@ public type MessageForwardingProcessor object {
     jms:Session jmsSession;
     jms:MessageConsumer messageConsumer;
 
-    // HTTP client used to forward messages to HTTP endpoint
-    http:Client httpClient;
-
     // Task driving the message polling from the broker and forward
-    task:Scheduler messageForwardingTask;
+    task:Scheduler? messageForwardingTask = ();
 
     # Initialize `MessageForwardingProcessor` object. This will create necessary
     # connnections to the configured message broker and configured backend. Polling 
@@ -79,7 +76,7 @@ public type MessageForwardingProcessor object {
         self.messageConsumer = consumer;
 
         // Init HTTP endpoint
-        self.httpClient = check self.initializeHTTPClient(processorConfig);
+        http:Client httpClient = check self.initializeHTTPClient(processorConfig);
 
         // Check if a cron is mentioned in config. If so, it gets priority
         string | int currentpollTimeConfig = processorConfig.pollTimeConfig;
@@ -99,7 +96,7 @@ public type MessageForwardingProcessor object {
         PollingServiceConfig pollingServiceConfig = {
             messageConsumer: self.messageConsumer,
             queueName: queueName,
-            httpClient: self.httpClient,
+            httpClient: httpClient,
             httpEP: processorConfig.HttpEndpointUrl,
             HttpOperation: processorConfig.HttpOperation,
             retryHttpCodes: retryHttpCodes,
@@ -114,10 +111,13 @@ public type MessageForwardingProcessor object {
         };
 
         // Attach the task work
-        var assignmentResult = self.messageForwardingTask.attach(messageForwardingService,  attachment = pollingServiceConfig);
-        if (assignmentResult is error) {
-            log:printError("Error when attaching service to the message processor task ", err = assignmentResult);
-            return assignmentResult;
+        task:Scheduler? task = self.messageForwardingTask;
+        if (task is task:Scheduler) {
+            var assignmentResult = task.attach(messageForwardingService,  attachment = pollingServiceConfig);
+            if (assignmentResult is error) {
+                log:printError("Error when attaching service to the message processor task ", err = assignmentResult);
+                return assignmentResult;
+            }
         }
     }
 
@@ -133,15 +133,21 @@ public type MessageForwardingProcessor object {
     #
     # + return - `error` in case of starting the polling task
     public function start() returns error? {
-        check self.messageForwardingTask. start();
+        task:Scheduler? task = self.messageForwardingTask;
+        if (task is task:Scheduler) {
+            check task.start();
+        }
     }
 
     # Stop Messsage Processor. This will stop polling and forwarding messages.
     #
     # + return - `error` in case of stopping Message Processor
     public function stop() returns error? {
-        check self.messageForwardingTask.stop();
-        self.active = false;
+        task:Scheduler? task = self.messageForwardingTask;
+        if (task is task:Scheduler) {
+            check task.start();
+            self.active = false;
+        }
     }
 
     # Keep main thread running 

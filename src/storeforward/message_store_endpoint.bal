@@ -59,7 +59,7 @@ public type Client client object {
     # 
     # + message - HTTP message to store 
     # + return - `error` if there is an issue storing the message (i.e connection issue with broker) 
-    public remote function store(http:Request message) returns error? {
+    public remote function store(http:Request message) returns @tainted error? {
 
         // Set request headers
         map<string> requestMessageHeadersMap = {};

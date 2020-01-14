@@ -26,9 +26,10 @@ forward them reliably to the HTTP endpoint.
 
 ## Compatibility
 
-|                             |           Version           |
-|:---------------------------:|:---------------------------:|
-| Ballerina Language          |            1.0.1            |
+|  Ballerina Language Version |   StoreForward Module Version   |
+|:---------------------------:|:-------------------------------:|
+|            1.0.x            |              0.9.x              |
+|            1.1.x            |             0.10.x              |
 
 ## Getting Started
 

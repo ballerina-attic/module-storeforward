@@ -1,6 +1,6 @@
 [project]
 org-name= "wso2"
-version= "0.9.2"
+version= "0.10.0"
 license= ["Apache-2.0"]
 authors = ["WSO2"]
 keywords = ["store forward", "message store message processor", "guaranteed delivery"]
